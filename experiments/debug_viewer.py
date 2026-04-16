@@ -28,7 +28,12 @@ def main():
     print("Task:", obs["task"])
     with mujoco.viewer.launch_passive(env.model, env.data) as viewer:
         try:
+
+            print(env.scene.metadata())
+            print(env.get_object_states())
+
             while viewer.is_running():
+
                 action = teleop.action(speed=0.0001, steps=4)
                 obs, reward, done, info = env.step(action)
                 if done:

@@ -83,7 +83,9 @@ class TelekinesisEnv:
     def get_object_states(self):
         out = []
         for idx, name in enumerate(self.meta.object_names):
-            out.append({"index": idx, "name": name, "pos": self.data.xpos[self.object_body_ids[name]].copy()})
+            record = {"index": idx, "name": name, "pos": self.data.xpos[self.object_body_ids[name]].copy()}
+            record.update(self.meta.object_attributes.get(name, {}))
+            out.append(record)
         return out
 
     def get_obstacle_states(self):

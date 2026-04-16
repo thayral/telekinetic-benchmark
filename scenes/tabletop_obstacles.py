@@ -1,7 +1,8 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import mujoco
 
 from telekinetics.core.scene import BaseScene, SceneMetadata
+from telekinetics.scenes.object_library import PrimitiveObjectSpec, default_object_library, sample_object_specs
 
 
 @dataclass
@@ -12,6 +13,9 @@ class TabletopObstacleSceneConfig:
     gravity_on: bool = False
     table_half_size: float = 0.55
     object_spawn_half_range: float = 0.30
+    min_object_separation: float = 0.12
+    object_library: list[PrimitiveObjectSpec] = field(default_factory=default_object_library)
+    object_specs: list[PrimitiveObjectSpec] | None = None
 
 
 class TabletopObstacleScene(BaseScene):
@@ -19,10 +23,27 @@ class TabletopObstacleScene(BaseScene):
 
     def __init__(self, cfg: TabletopObstacleSceneConfig):
         self.cfg = cfg
+        rng = __import__("numpy").random.default_rng(cfg.seed)
+        self.object_specs = list(cfg.object_specs) if cfg.object_specs is not None else sample_object_specs(
+            rng=rng,
+            library=cfg.object_library,
+            n_objects=cfg.n_objects,
+        )
         self._meta = SceneMetadata(
-            object_names=[f"obj_{i}" for i in range(cfg.n_objects)],
+            object_names=[f"obj_{i}" for i in range(len(self.object_specs))],
             obstacle_names=["obstacle_center"],
-            mocap_names=[f"mocap_{i}" for i in range(cfg.n_objects)],
+            mocap_names=[f"mocap_{i}" for i in range(len(self.object_specs))],
+            object_attributes={
+                f"obj_{i}": {
+                    "spec_id": spec.spec_id,
+                    "label": spec.label(),
+                    "shape": spec.shape,
+                    "size": list(spec.size),
+                    "rgba": list(spec.rgba),
+                    "mass": spec.mass,
+                }
+                for i, spec in enumerate(self.object_specs)
+            },
             goal_geom_name="goal_region",
             plane_z=cfg.plane_z,
         )
@@ -37,8 +58,8 @@ class TabletopObstacleScene(BaseScene):
         object_bodies = []
         mocap_bodies = []
         welds = []
-        for i in range(self.cfg.n_objects):
-            obj_xml, mocap_xml, weld_xml = self._make_object_bundle(i)
+        for i, spec in enumerate(self.object_specs):
+            obj_xml, mocap_xml, weld_xml = self._make_object_bundle(i, spec)
             object_bodies.append(obj_xml)
             mocap_bodies.append(mocap_xml)
             welds.append(weld_xml)
@@ -86,21 +107,13 @@ class TabletopObstacleScene(BaseScene):
 </mujoco>
 """
 
-    def _make_object_bundle(self, index: int):
+    def _make_object_bundle(self, index: int, spec: PrimitiveObjectSpec):
         name = f"obj_{index}"
         mocap_name = f"mocap_{index}"
 
-        shapes = ["box", "sphere", "cylinder"]
-        palette = [
-            (1.0, 0.1, 0.1, 1.0),
-            (0.1, 0.6, 1.0, 1.0),
-            (0.2, 0.9, 0.2, 1.0),
-            (1.0, 0.85, 0.1, 1.0),
-            (0.7, 0.2, 0.9, 1.0),
-        ]
-
-        shape = shapes[index % len(shapes)]
-        rgba = " ".join(map(str, palette[index % len(palette)]))
+        shape = spec.shape
+        rgba = " ".join(map(str, spec.rgba))
+        size = " ".join(map(str, spec.size))
 
         # Critical: shared reference pose for object body and mocap body.
         x0 = 0.0
@@ -108,12 +121,9 @@ class TabletopObstacleScene(BaseScene):
         z0 = self.cfg.plane_z
         slide_limit = self.cfg.table_half_size - 0.07
 
-        if shape == "box":
-            geom_xml = f'<geom name="{name}_geom" type="box" size="0.03 0.03 0.03" rgba="{rgba}"/>'
-        elif shape == "sphere":
-            geom_xml = f'<geom name="{name}_geom" type="sphere" size="0.035" rgba="{rgba}"/>'
-        else:
-            geom_xml = f'<geom name="{name}_geom" type="cylinder" size="0.03 0.05" rgba="{rgba}"/>'
+        geom_xml = (
+            f'<geom name="{name}_geom" type="{shape}" size="{size}" rgba="{rgba}" mass="{spec.mass}"/>'
+        )
 
         object_xml = f"""
     <body name="{name}" pos="{x0} {y0} {z0}">
@@ -133,14 +143,18 @@ class TabletopObstacleScene(BaseScene):
 
     def reset_layout(self, env, rng) -> None:
         spawn = self.cfg.object_spawn_half_range
+        placed_xy = []
 
         for name in self._meta.object_names:
             jx = mujoco.mj_name2id(env.model, mujoco.mjtObj.mjOBJ_JOINT, f"{name}_x")
             jy = mujoco.mj_name2id(env.model, mujoco.mjtObj.mjOBJ_JOINT, f"{name}_y")
             jyaw = mujoco.mj_name2id(env.model, mujoco.mjtObj.mjOBJ_JOINT, f"{name}_yaw")
 
-            env.data.qpos[env.model.jnt_qposadr[jx]] = float(rng.uniform(-spawn, spawn))
-            env.data.qpos[env.model.jnt_qposadr[jy]] = float(rng.uniform(-spawn, spawn))
+            x, y = self._sample_spawn_xy(rng, spawn, placed_xy)
+            placed_xy.append((x, y))
+
+            env.data.qpos[env.model.jnt_qposadr[jx]] = x
+            env.data.qpos[env.model.jnt_qposadr[jy]] = y
             env.data.qpos[env.model.jnt_qposadr[jyaw]] = float(rng.uniform(-0.2, 0.2))
 
         mujoco.mj_forward(env.model, env.data)
@@ -152,3 +166,12 @@ class TabletopObstacleScene(BaseScene):
             env.data.mocap_pos[i, 0] = pos[0]
             env.data.mocap_pos[i, 1] = pos[1]
             env.data.mocap_pos[i, 2] = self.cfg.plane_z
+
+    #TODO: make a fallback if cant find a solution
+    def _sample_spawn_xy(self, rng, spawn: float, placed_xy: list[tuple[float, float]]) -> tuple[float, float]:
+        for _ in range(200):
+            x = float(rng.uniform(-spawn, spawn))
+            y = float(rng.uniform(-spawn, spawn))
+            if all((x - px) ** 2 + (y - py) ** 2 >= self.cfg.min_object_separation ** 2 for px, py in placed_xy):
+                return x, y
+        return float(rng.uniform(-spawn, spawn)), float(rng.uniform(-spawn, spawn))
