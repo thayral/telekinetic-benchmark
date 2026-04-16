@@ -27,7 +27,7 @@ class TelekinesisActionInterface(BaseActionInterface):
 
 
     def apply(self, env, action):
-        low_level = self._to_low_level_action(action)
+        low_level = action # self._to_low_level_action(action)
         idx = None if low_level is None else low_level.object_index
         steps = 4 if low_level is None else int(low_level.steps)
         settle_steps = 0 if low_level is None else int(getattr(low_level, "settle_steps", 0))
@@ -73,24 +73,6 @@ class TelekinesisActionInterface(BaseActionInterface):
             self._sync_inactive_mocaps(env, idx)
             mujoco.mj_step(env.model, env.data)
 
-
-
-    def _to_low_level_action(self, action):
-        if action is None:
-            return None
-        if isinstance(action, TelekineticAction):
-            return action
-        if isinstance(action, ActionInstance):
-            if action.spec.action_type != "translate":
-                raise ValueError(f"Unsupported action type: {action.spec.action_type}")
-            return TelekineticAction(
-                object_index=action.target_index,
-                dxy=action_delta_xy(action.spec),
-                frame=action.spec.frame,
-                steps=action.rollout_steps,
-                settle_steps=action.settle_steps,
-            )
-        raise TypeError(f"Unsupported action object: {type(action)!r}")
 
     def _normalize_xy(self, v, eps=1e-8):
         n = np.linalg.norm(v)
