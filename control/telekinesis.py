@@ -1,6 +1,6 @@
 import numpy as np
 import mujoco
-from telekinetics.core.action import BaseActionInterface
+from telekinetics.core.action import BaseActionInterface, ActionInstance, TelekineticAction, action_delta_xy
 
 class TelekinesisActionInterface(BaseActionInterface):
     def __init__(self, plane_z=0.53, 
@@ -27,21 +27,20 @@ class TelekinesisActionInterface(BaseActionInterface):
 
 
     def apply(self, env, action):
-        idx = None if action is None else action.object_index
-        steps = 4 if action is None else int(action.steps)
+        low_level = self._to_low_level_action(action)
+        idx = None if low_level is None else low_level.object_index
+        steps = 4 if low_level is None else int(low_level.steps)
+        settle_steps = 0 if low_level is None else int(getattr(low_level, "settle_steps", 0))
 
         if idx is not None and idx >= 0:
-
-            if action.frame == "world":
-                delta_world_xy = action.dxy
-            elif action.frame == "camera":
-                delta_world_xy = self._action_dxy_world(env, action)
+            if low_level.frame == "world":
+                delta_world_xy = low_level.dxy
+            elif low_level.frame == "camera":
+                delta_world_xy = self._action_dxy_world(env, low_level)
             else:
-                raise ValueError(...)
-
-
+                raise ValueError(f"Unknown action frame: {low_level.frame}")
             # update selected mocap target
-            idx = int(action.object_index)
+            idx = int(low_level.object_index)
             env.current_selection = idx
             self._sync_inactive_mocaps(env, idx)
 
@@ -54,7 +53,7 @@ class TelekinesisActionInterface(BaseActionInterface):
             # table space mocap pos clip
             new_pos[0] = np.clip(new_pos[0], *self.x_bounds)
             new_pos[1] = np.clip(new_pos[1], *self.y_bounds)
-            
+
             # mocap - obj distance clip
             obj_pos = env.object_position(idx)
             offset_xy = new_pos[:2] - obj_pos[:2]
@@ -64,15 +63,34 @@ class TelekinesisActionInterface(BaseActionInterface):
                 new_pos[0] = obj_pos[0] + offset_xy[0] / dist * self.max_mocap_offset
                 new_pos[1] = obj_pos[1] + offset_xy[1] / dist * self.max_mocap_offset
 
-
             env.data.mocap_pos[idx] = new_pos
 
         for _ in range(steps):
-
             self._sync_inactive_mocaps(env, idx)
-
             mujoco.mj_step(env.model, env.data)
 
+        for _ in range(settle_steps):
+            self._sync_inactive_mocaps(env, idx)
+            mujoco.mj_step(env.model, env.data)
+
+
+
+    def _to_low_level_action(self, action):
+        if action is None:
+            return None
+        if isinstance(action, TelekineticAction):
+            return action
+        if isinstance(action, ActionInstance):
+            if action.spec.action_type != "translate":
+                raise ValueError(f"Unsupported action type: {action.spec.action_type}")
+            return TelekineticAction(
+                object_index=action.target_index,
+                dxy=action_delta_xy(action.spec),
+                frame=action.spec.frame,
+                steps=action.rollout_steps,
+                settle_steps=action.settle_steps,
+            )
+        raise TypeError(f"Unsupported action object: {type(action)!r}")
 
     def _normalize_xy(self, v, eps=1e-8):
         n = np.linalg.norm(v)
