@@ -1,8 +1,8 @@
 from dataclasses import dataclass, field
 import mujoco
 
-from telekinetics.core.scene import BaseScene, SceneMetadata
-from telekinetics.scenes.object_library import PrimitiveObjectSpec, default_object_library, sample_object_specs
+from telekinetics.simulator.core.scene import BaseScene, SceneMetadata
+from telekinetics.simulator.scenes.object_library import PrimitiveObjectSpec, default_object_library, sample_object_specs
 
 
 @dataclass

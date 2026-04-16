@@ -1,5 +1,5 @@
 import numpy as np
-from telekinetics.core.task import BaseTask
+from telekinetics.simulator.core.task import BaseTask
 
 class PlaceObjectInRegionTask(BaseTask):
     def __init__(self, sampler, success_hold_steps=5):

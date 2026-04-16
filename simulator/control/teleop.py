@@ -1,6 +1,6 @@
 import threading
 from pynput import keyboard
-from telekinetics.core.action import TelekineticAction
+from telekinetics.simulator.core.action import TelekineticAction
 
 class Teleop:
     def __init__(self, n_objects):

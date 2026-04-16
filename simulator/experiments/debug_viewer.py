@@ -1,11 +1,11 @@
 import mujoco.viewer
-from telekinetics.control.telekinesis import TelekinesisActionInterface
-from telekinetics.control.teleop import Teleop
-from telekinetics.core.env import EnvConfig, TelekinesisEnv
-from telekinetics.observations.oracle import OracleSceneObservation
-from telekinetics.scenes.tabletop_obstacles import TabletopObstacleScene, TabletopObstacleSceneConfig
-from telekinetics.tasks.place_in_region import PlaceObjectInRegionTask
-from telekinetics.tasks.samplers import PlaceInRegionSampler
+from telekinetics.simulator.control.telekinesis import TelekinesisActionInterface
+from telekinetics.simulator.control.teleop import Teleop
+from telekinetics.simulator.core.env import EnvConfig, TelekinesisEnv
+from telekinetics.simulator.observations.oracle import OracleSceneObservation
+from telekinetics.simulator.scenes.tabletop_obstacles import TabletopObstacleScene, TabletopObstacleSceneConfig
+from telekinetics.simulator.tasks.place_in_region import PlaceObjectInRegionTask
+from telekinetics.simulator.tasks.samplers import PlaceInRegionSampler
 
 def build_env():
     scene = TabletopObstacleScene(TabletopObstacleSceneConfig(n_objects=4, seed=42, gravity_on=False, plane_z=0.53))

@@ -1,4 +1,4 @@
-from telekinetics.core.observation import BaseObservationProvider
+from telekinetics.simulator.core.observation import BaseObservationProvider
 
 class OracleSceneObservation(BaseObservationProvider):
     def __init__(self, include_obstacles=True):

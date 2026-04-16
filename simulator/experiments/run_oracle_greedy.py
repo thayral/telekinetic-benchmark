@@ -1,11 +1,11 @@
 import statistics
-from telekinetics.agents.oracle_greedy import OracleGreedyAgent
-from telekinetics.control.telekinesis import TelekinesisActionInterface
-from telekinetics.core.env import EnvConfig, TelekinesisEnv
-from telekinetics.observations.oracle import OracleSceneObservation
-from telekinetics.scenes.tabletop_obstacles import TabletopObstacleScene, TabletopObstacleSceneConfig
-from telekinetics.tasks.place_in_region import PlaceObjectInRegionTask
-from telekinetics.tasks.samplers import PlaceInRegionSampler
+from telekinetics.simulator.agents.oracle_greedy import OracleGreedyAgent
+from telekinetics.simulator.control.telekinesis import TelekinesisActionInterface
+from telekinetics.simulator.core.env import EnvConfig, TelekinesisEnv
+from telekinetics.simulator.observations.oracle import OracleSceneObservation
+from telekinetics.simulator.scenes.tabletop_obstacles import TabletopObstacleScene, TabletopObstacleSceneConfig
+from telekinetics.simulator.tasks.place_in_region import PlaceObjectInRegionTask
+from telekinetics.simulator.tasks.samplers import PlaceInRegionSampler
 
 import mujoco.viewer
 

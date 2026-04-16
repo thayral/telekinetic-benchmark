@@ -1,6 +1,6 @@
 import numpy as np
-from telekinetics.agents.base_agent import BaseAgent
-from telekinetics.core.action import TelekineticAction
+from telekinetics.simulator.agents.base_agent import BaseAgent
+from telekinetics.simulator.core.action import TelekineticAction
 
 class OracleGreedyAgent(BaseAgent):
     def __init__(self, step_size: float = 0.01, steps_per_action: int = 4, goal_tolerance: float = 0.01):

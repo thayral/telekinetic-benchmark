@@ -1,6 +1,6 @@
 import numpy as np
 import mujoco
-from telekinetics.core.action import BaseActionInterface, ActionInstance, TelekineticAction, action_delta_xy
+from telekinetics.simulator.core.action import BaseActionInterface, TelekineticAction
 
 class TelekinesisActionInterface(BaseActionInterface):
     def __init__(self, plane_z=0.53, 
