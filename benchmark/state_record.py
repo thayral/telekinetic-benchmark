@@ -31,7 +31,24 @@ class StateRecord:
 def _as_serializable_array(x) -> list:
     return np.asarray(x, dtype=float).round(8).tolist()
 
-
+def to_jsonable(x):
+    if isinstance(x, np.ndarray):
+        return np.asarray(x, dtype=float).round(8).tolist()
+    if isinstance(x, np.floating):
+        return round(float(x), 8)
+    if isinstance(x, np.integer):
+        return int(x)
+    if isinstance(x, np.bool_):
+        return bool(x)
+    if isinstance(x, dict):
+        return {k: to_jsonable(v) for k, v in x.items()}
+    if isinstance(x, list):
+        return [to_jsonable(v) for v in x]
+    if isinstance(x, tuple):
+        return [to_jsonable(v) for v in x]
+    if isinstance(x, float):
+        return round(x, 8)
+    return x
 
 def capture_checkpoint(env) -> dict[str, list]:
     return {
@@ -44,8 +61,8 @@ def capture_checkpoint(env) -> dict[str, list]:
 
 
 def capture_state(env, render_path: str | None = None, seed: int | None = None) -> StateRecord:
-    object_states = env.get_object_states()
-    checkpoint = capture_checkpoint(env)
+    object_states = to_jsonable(env.get_object_states())
+    checkpoint = to_jsonable(capture_checkpoint(env))
     scene_name = type(env.scene).__name__
     state_hash = compute_state_hash(
         scene_name=scene_name,

@@ -81,7 +81,7 @@ class TabletopObstacleScene(BaseScene):
 
   <worldbody>
     <light pos="0 0 2.0" dir="0 0 -1"/>
-    <camera name="cam_oblique" pos="0.9 -1.2 0.85" quat="0.86 0.40 0.23 0.16" fovy="55"/>
+    <camera name="cam_oblique" pos="-0.009 -1.060 1.597" xyaxes="1.000 -0.000 0.000 0.000 0.754 0.657" fovy="25"/>
     <geom name="floor" type="plane" size="3 3 0.1" rgba="0.95 0.95 0.95 1"/>
 
     <body name="table" pos="0 0 0.45">
