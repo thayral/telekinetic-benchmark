@@ -5,6 +5,7 @@ from telekinetics.simulator.core.scene import BaseScene, SceneMetadata
 from telekinetics.simulator.scenes.object_library import PrimitiveObjectSpec, default_object_library, sample_object_specs
 
 
+
 @dataclass
 class TabletopObstacleSceneConfig:
     n_objects: int = 4
