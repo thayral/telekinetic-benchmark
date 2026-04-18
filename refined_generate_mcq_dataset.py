@@ -9,9 +9,10 @@ import imageio.v2 as imageio
 import numpy as np
 
 from telekinetics.simulator.scenes.tabletop_obstacles import (
-    TabletopObstacleScene,
     TabletopObstacleSceneConfig,
+    TabletopObstacleSceneFactory,
 )
+
 from telekinetics.simulator.control.telekinesis import TelekinesisActionInterface
 from telekinetics.simulator.core.env import TelekinesisEnv
 from telekinetics.simulator.observations.oracle import OracleSceneObservation
@@ -363,12 +364,17 @@ def generate_mcq_dataset(
     if invalid:
         raise ValueError(f"Unsupported categories requested: {invalid}")
 
-    scene = TabletopObstacleScene(TabletopObstacleSceneConfig(n_objects=n_objects, seed=seed))
+    cfg = TabletopObstacleSceneConfig(n_objects=n_objects, seed=seed)
+    factory = TabletopObstacleSceneFactory(cfg)
+    scene = factory.create(seed=seed)
+
     env = TelekinesisEnv(
         scene=scene,
         action_interface=TelekinesisActionInterface(),
         observation_provider=OracleSceneObservation(),
     )
+
+
     rng = np.random.default_rng(seed)
 
     questions: list[dict] = []

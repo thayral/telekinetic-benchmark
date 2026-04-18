@@ -6,6 +6,7 @@ class SceneMetadata:
     obstacle_names: list[str] = field(default_factory=list)
     mocap_names: list[str] = field(default_factory=list)
     object_attributes: dict[str, dict] = field(default_factory=dict) # the name label
+    obstacle_attributes: dict[str, dict] = field(default_factory=dict)
     goal_geom_name: str | None = None
     plane_z: float = 0.53
 

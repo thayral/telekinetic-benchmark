@@ -91,12 +91,15 @@ class TelekinesisEnv:
     def get_obstacle_states(self):
         out = []
         for name, gid in self.obstacle_geom_ids.items():
-            out.append({
+            record = {
                 "name": name,
                 "pos": self.model.geom_pos[gid].copy(),
                 "size": self.model.geom_size[gid].copy(),
-            })
+            }
+            record.update(self.meta.obstacle_attributes.get(name, {}))
+            out.append(record)
         return out
+
 
     def set_goal_region(self, center_xy, half_extents_xy):
         if self.goal_geom_id is None:
