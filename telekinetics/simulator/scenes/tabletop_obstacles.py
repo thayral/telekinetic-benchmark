@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field, replace
+from dataclasses import asdict, dataclass, field
+import json
+from pathlib import Path
+
 import mujoco
 import numpy as np
 
@@ -18,118 +21,177 @@ from telekinetics.simulator.scenes.obstacle_library import (
 )
 
 
-@dataclass
+@dataclass(frozen=True)
 class TabletopObstacleSceneConfig:
+    """Sampling policy for tabletop obstacle scenes.
+
+    This is generation-time policy chosen by the caller. It is not the realized
+    scene itself and should not be mutated by the scene.
+    """
+
     n_objects: int = 4
     seed: int = 0
     plane_z: float = 0.53
     gravity_on: bool = False
     table_half_size: float = 0.55
-    object_spawn_half_range: float = 0.30
+    object_spawn_half_range: float = 0.20
     min_object_separation: float = 0.12
     object_library: list[PrimitiveObjectSpec] = field(default_factory=default_object_library)
-    object_specs: list[PrimitiveObjectSpec] | None = None
 
-    min_obstacles: int = 0
+    min_obstacles: int = 1
     max_obstacles: int = 2
     obstacle_spawn_half_range: float = 0.24
     min_obstacle_separation: float = 0.12
     obstacle_library: list[ObstacleSpec] = field(default_factory=default_obstacle_library)
-    obstacle_specs: list[ObstacleSpec] | None = None
     obstacle_rgba: tuple[float, float, float, float] = (0.45, 0.45, 0.48, 1.0)
+
+    world_preset: str = "tabletop_obstacles_v1"
+    scene_spec_version: int = 1
+
+
+@dataclass(frozen=True)
+class ObstaclePlacement:
+    """Structural obstacle realization that belongs in the scene spec."""
+
+    name: str
+    spec: ObstacleSpec
+    pos: tuple[float, float, float]
+    rgba: tuple[float, float, float, float]
+
+
+@dataclass(frozen=True)
+class TabletopObstacleSceneSpec:
+    """Realized structural world description.
+
+    This stores only structural information needed to rebuild the world. Dynamic
+    object state remains in the MuJoCo checkpoint.
+    """
+
+    scene_type: str
+    version: int
+    scene_seed: int
+    world_preset: str
+    gravity_on: bool
+    plane_z: float
+    table_half_size: float
+    object_specs: tuple[PrimitiveObjectSpec, ...]
+    obstacles: tuple[ObstaclePlacement, ...]
+
+    def to_dict(self) -> dict:
+        return {
+            "scene_type": self.scene_type,
+            "version": self.version,
+            "scene_seed": self.scene_seed,
+            "world": {
+                "preset": self.world_preset,
+                "gravity_on": self.gravity_on,
+                "plane_z": self.plane_z,
+                "table_half_size": self.table_half_size,
+            },
+            "object_specs": [asdict(spec) for spec in self.object_specs],
+            "obstacles": [
+                {
+                    "name": obs.name,
+                    "spec": asdict(obs.spec),
+                    "rgba": list(obs.rgba),
+                    "pos": list(obs.pos),
+                }
+                for obs in self.obstacles
+            ],
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "TabletopObstacleSceneSpec":
+        world = data.get("world", {})
+        object_specs = tuple(
+            PrimitiveObjectSpec(
+                spec_id=item["spec_id"],
+                shape=item["shape"],
+                size=tuple(item["size"]),
+                rgba=tuple(item["rgba"]),
+                display_name=item.get("display_name"),
+                mass=float(item.get("mass", 1.0)),
+            )
+            for item in data.get("object_specs", [])
+        )
+        obstacles = []
+        for item in data.get("obstacles", []):
+            spec_data = item["spec"]
+            spec = ObstacleSpec(
+                spec_id=spec_data["spec_id"],
+                shape=spec_data.get("shape", "box"),
+                size=tuple(spec_data.get("size", (0.08, 0.03, 0.03))),
+                rgba=tuple(spec_data.get("rgba", (0.45, 0.45, 0.48, 1.0))),
+                display_name=spec_data.get("display_name"),
+            )
+            obstacles.append(
+                ObstaclePlacement(
+                    name=item["name"],
+                    spec=spec,
+                    pos=tuple(item["pos"]),
+                    rgba=tuple(item.get("rgba", spec.rgba)),
+                )
+            )
+        return cls(
+            scene_type=data.get("scene_type", "tabletop_obstacle"),
+            version=int(data.get("version", 1)),
+            scene_seed=int(data.get("scene_seed", 0)),
+            world_preset=world.get("preset", "tabletop_obstacles_v1"),
+            gravity_on=bool(world.get("gravity_on", False)),
+            plane_z=float(world.get("plane_z", 0.53)),
+            table_half_size=float(world.get("table_half_size", 0.55)),
+            object_specs=object_specs,
+            obstacles=tuple(obstacles),
+        )
 
 
 class TabletopObstacleSceneFactory:
-    """Owns scene sampling and partial re-sampling policy."""
+    """Samples realized scene specs from a config."""
 
     def __init__(self, cfg: TabletopObstacleSceneConfig):
         self.cfg = cfg
 
     def create(self, seed: int | None = None) -> "TabletopObstacleScene":
+        spec = self.sample_scene_spec(seed=seed)
+        return TabletopObstacleScene(spec=spec, config=self.cfg)
+
+    def sample_scene_spec(self, seed: int | None = None) -> TabletopObstacleSceneSpec:
         seed = self.cfg.seed if seed is None else int(seed)
         rng = np.random.default_rng(seed)
 
-        object_specs = list(self.cfg.object_specs) if self.cfg.object_specs is not None else sample_object_specs(
-            rng=rng,
-            library=self.cfg.object_library,
-            n_objects=self.cfg.n_objects,
+        object_specs = tuple(
+            sample_object_specs(
+                rng=rng,
+                library=self.cfg.object_library,
+                n_objects=self.cfg.n_objects,
+            )
         )
-        obstacle_specs = list(self.cfg.obstacle_specs) if self.cfg.obstacle_specs is not None else sample_obstacle_specs(
+        obstacle_specs = sample_obstacle_specs(
             rng=rng,
             library=self.cfg.obstacle_library,
             min_count=self.cfg.min_obstacles,
             max_count=self.cfg.max_obstacles,
         )
-        scene_obstacles = self._instantiate_obstacles(rng, obstacle_specs)
-        scene_cfg = replace(
-            self.cfg,
-            seed=seed,
-            object_specs=list(object_specs),
-            obstacle_specs=list(obstacle_specs),
-        )
-        return TabletopObstacleScene(
-            cfg=scene_cfg,
+        obstacles = tuple(self._instantiate_obstacles(rng, obstacle_specs))
+
+        return TabletopObstacleSceneSpec(
+            scene_type="tabletop_obstacle",
+            version=self.cfg.scene_spec_version,
+            scene_seed=seed,
+            world_preset=self.cfg.world_preset,
+            gravity_on=self.cfg.gravity_on,
+            plane_z=self.cfg.plane_z,
+            table_half_size=self.cfg.table_half_size,
             object_specs=object_specs,
-            scene_obstacles=scene_obstacles,
+            obstacles=obstacles,
         )
-
-    def resample_object_specs(self, scene: "TabletopObstacleScene", seed: int | None = None) -> "TabletopObstacleScene":
-        seed = scene.cfg.seed if seed is None else int(seed)
-        rng = np.random.default_rng(seed)
-        object_specs = sample_object_specs(
-            rng=rng,
-            library=scene.cfg.object_library,
-            n_objects=scene.cfg.n_objects,
-        )
-        scene_cfg = replace(
-            scene.cfg,
-            seed=seed,
-            object_specs=list(object_specs),
-            obstacle_specs=list(scene.obstacle_specs),
-        )
-        return TabletopObstacleScene(
-            cfg=scene_cfg,
-            object_specs=object_specs,
-            scene_obstacles=list(scene.scene_obstacles),
-            factory=self,
-        )
-
-    def resample_environment_specs(self, scene: "TabletopObstacleScene", seed: int | None = None) -> "TabletopObstacleScene":
-        seed = scene.cfg.seed if seed is None else int(seed)
-        rng = np.random.default_rng(seed)
-        obstacle_specs = sample_obstacle_specs(
-            rng=rng,
-            library=scene.cfg.obstacle_library,
-            min_count=scene.cfg.min_obstacles,
-            max_count=scene.cfg.max_obstacles,
-        )
-        scene_obstacles = self._instantiate_obstacles(rng, obstacle_specs)
-        scene_cfg = replace(
-            scene.cfg,
-            seed=seed,
-            object_specs=list(scene.object_specs),
-            obstacle_specs=list(obstacle_specs),
-        )
-        return TabletopObstacleScene(
-            cfg=scene_cfg,
-            object_specs=list(scene.object_specs),
-            scene_obstacles=scene_obstacles,
-            factory=self,
-        )
-
-    def resample_full(self, scene: "TabletopObstacleScene" | None = None, seed: int | None = None) -> "TabletopObstacleScene":
-        seed = (self.cfg.seed if scene is None else scene.cfg.seed) if seed is None else int(seed)
-        base_cfg = self.cfg if scene is None else replace(
-            scene.cfg,
-            object_specs=None,
-            obstacle_specs=None,
-        )
-        return TabletopObstacleSceneFactory(base_cfg).create(seed=seed)
 
     def reset_positions(self, scene: "TabletopObstacleScene", env, rng) -> None:
-        spawn = scene.cfg.object_spawn_half_range
+        """Resample dynamic object pose only inside an already-built world."""
+        spawn = scene.config.object_spawn_half_range #if scene.config is not None else 0.30
+        min_sep = scene.config.min_object_separation #if scene.config is not None else 0.12
+        plane_z = scene.spec.plane_z
         placed_xy: list[tuple[float, float]] = []
-        obstacle_records = scene.scene_obstacles
 
         for spec, name in zip(scene.object_specs, scene._meta.object_names):
             jx = mujoco.mj_name2id(env.model, mujoco.mjtObj.mjOBJ_JOINT, f"{name}_x")
@@ -137,7 +199,14 @@ class TabletopObstacleSceneFactory:
             jyaw = mujoco.mj_name2id(env.model, mujoco.mjtObj.mjOBJ_JOINT, f"{name}_yaw")
 
             radius = self._object_planar_radius(spec)
-            x, y = self._sample_spawn_xy(rng, spawn, placed_xy, radius, obstacle_records)
+            x, y = self._sample_spawn_xy(
+                rng=rng,
+                spawn=spawn,
+                min_sep=min_sep,
+                placed_xy=placed_xy,
+                object_radius=radius,
+                obstacles=scene.scene_obstacles,
+            )
             placed_xy.append((x, y))
 
             env.data.qpos[env.model.jnt_qposadr[jx]] = x
@@ -151,24 +220,21 @@ class TabletopObstacleSceneFactory:
             pos = env.data.xpos[body_id].copy()
             env.data.mocap_pos[i, 0] = pos[0]
             env.data.mocap_pos[i, 1] = pos[1]
-            env.data.mocap_pos[i, 2] = scene.cfg.plane_z
+            env.data.mocap_pos[i, 2] = plane_z
 
-    def _instantiate_obstacles(self, rng, obstacle_specs: list[ObstacleSpec]) -> list[SceneObstacle]:
+    def _instantiate_obstacles(self, rng, obstacle_specs: list[ObstacleSpec]) -> list[ObstaclePlacement]:
         placed_xy: list[tuple[float, float]] = []
-        out: list[SceneObstacle] = []
+        out: list[ObstaclePlacement] = []
         for i, spec in enumerate(obstacle_specs):
             x, y = self._sample_obstacle_xy(rng, placed_xy, spec)
             placed_xy.append((x, y))
             z = float(spec.size[-1]) if len(spec.size) >= 3 else 0.03
             out.append(
-                SceneObstacle(
+                ObstaclePlacement(
                     name=f"obstacle_{i}",
-                    spec_id=spec.spec_id,
-                    shape=spec.shape,
-                    size=tuple(spec.size),
-                    rgba=tuple(self.cfg.obstacle_rgba),
+                    spec=spec,
                     pos=(x, y, z),
-                    display_name=spec.display_name,
+                    rgba=tuple(self.cfg.obstacle_rgba),
                 )
             )
         return out
@@ -196,6 +262,7 @@ class TabletopObstacleSceneFactory:
         self,
         rng,
         spawn: float,
+        min_sep: float,
         placed_xy: list[tuple[float, float]],
         object_radius: float,
         obstacles: list[SceneObstacle],
@@ -203,7 +270,7 @@ class TabletopObstacleSceneFactory:
         for _ in range(200):
             x = float(rng.uniform(-spawn, spawn))
             y = float(rng.uniform(-spawn, spawn))
-            if not all((x - px) ** 2 + (y - py) ** 2 >= self.cfg.min_object_separation ** 2 for px, py in placed_xy):
+            if not all((x - px) ** 2 + (y - py) ** 2 >= min_sep ** 2 for px, py in placed_xy):
                 continue
             if self._blocked_by_obstacle(x, y, object_radius, obstacles):
                 continue
@@ -228,19 +295,24 @@ class TabletopObstacleSceneFactory:
 
 
 class TabletopObstacleScene(BaseScene):
-    """Planar tabletop scene with coherent object/mocap bundles."""
+    """Realized tabletop scene built from a structural scene spec."""
 
-    def __init__(
-        self,
-        cfg: TabletopObstacleSceneConfig,
-        *,
-        object_specs: list[PrimitiveObjectSpec] | None = None,
-        scene_obstacles: list[SceneObstacle] | None = None,
-    ):
-        self.cfg = cfg
-        self.object_specs = list(object_specs) if object_specs is not None else list(cfg.object_specs or [])
-        self.obstacle_specs = list(cfg.obstacle_specs) if cfg.obstacle_specs is not None else []
-        self.scene_obstacles = list(scene_obstacles) if scene_obstacles is not None else []
+    def __init__(self, spec: TabletopObstacleSceneSpec, config: TabletopObstacleSceneConfig | None = None):
+        self.spec = spec
+        self.config = config
+        self.object_specs = list(spec.object_specs)
+        self.scene_obstacles = [
+            SceneObstacle(
+                name=obs.name,
+                spec_id=obs.spec.spec_id,
+                shape=obs.spec.shape,
+                size=tuple(obs.spec.size),
+                rgba=tuple(obs.rgba),
+                pos=tuple(obs.pos),
+                display_name=obs.spec.display_name,
+            )
+            for obs in spec.obstacles
+        ]
         self._meta = SceneMetadata(
             object_names=[f"obj_{i}" for i in range(len(self.object_specs))],
             obstacle_names=[obs.name for obs in self.scene_obstacles],
@@ -256,11 +328,10 @@ class TabletopObstacleScene(BaseScene):
                 }
                 for i, spec in enumerate(self.object_specs)
             },
-            
             obstacle_attributes={
                 obs.name: {
                     "spec_id": obs.spec_id,
-                    "label": obs.spec_id,
+                    "label": obs.label(),
                     "shape": obs.shape,
                     "size": list(obs.size),
                     "rgba": list(obs.rgba),
@@ -269,15 +340,44 @@ class TabletopObstacleScene(BaseScene):
                 for obs in self.scene_obstacles
             },
             goal_geom_name="goal_region",
-            plane_z=cfg.plane_z,
+            plane_z=spec.plane_z,
         )
 
     def metadata(self):
         return self._meta
 
+    def to_scene_spec(self) -> TabletopObstacleSceneSpec:
+        return self.spec
+
+    @classmethod
+    def from_scene_spec(
+        cls,
+        scene_spec: TabletopObstacleSceneSpec | dict,
+        config: TabletopObstacleSceneConfig | None = None,
+    ) -> "TabletopObstacleScene":
+        spec = scene_spec if isinstance(scene_spec, TabletopObstacleSceneSpec) else TabletopObstacleSceneSpec.from_dict(scene_spec)
+        return cls(spec=spec, config=config)
+
+    def save_scene_spec(self, path: str | Path) -> None:
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(self.spec.to_dict(), indent=2), encoding="utf-8")
+
+    @classmethod
+    def load_scene_spec(
+        cls,
+        path: str | Path,
+        config: TabletopObstacleSceneConfig | None = None,
+    ) -> "TabletopObstacleScene":
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
+        return cls.from_scene_spec(data, config=config)
+
     def build_mjcf(self) -> str:
-        gravity = "0 0 -9.81" if self.cfg.gravity_on else "0 0 0"
-        h = self.cfg.table_half_size
+        if self.spec.world_preset != "tabletop_obstacles_v1":
+            raise ValueError(f"Unsupported world preset: {self.spec.world_preset}")
+
+        gravity = "0 0 -9.81" if self.spec.gravity_on else "0 0 0"
+        h = self.spec.table_half_size
 
         object_bodies = []
         mocap_bodies = []
@@ -333,6 +433,12 @@ class TabletopObstacleScene(BaseScene):
 </mujoco>
 """
 
+    def reset_layout(self, env, rng) -> None:
+        """Only resample dynamic object positions. Structural changes require a new scene."""
+        if self.config is None:
+            raise RuntimeError("Scene.reset_layout requires a config-backed scene.")
+        TabletopObstacleSceneFactory(self.config).reset_positions(self, env, rng)
+
     def _make_object_bundle(self, index: int, spec: PrimitiveObjectSpec):
         name = f"obj_{index}"
         mocap_name = f"mocap_{index}"
@@ -343,12 +449,11 @@ class TabletopObstacleScene(BaseScene):
 
         x0 = 0.0
         y0 = 0.0
-        z0 = self.cfg.plane_z
-        slide_limit = self.cfg.table_half_size - 0.07
+        z0 = self.spec.plane_z
+        table_half_size = self.config.table_half_size if self.config is not None else self.spec.table_half_size
+        slide_limit = table_half_size - 0.07
 
-        geom_xml = (
-            f'<geom name="{name}_geom" type="{shape}" size="{size}" rgba="{rgba}" mass="{spec.mass}"/>'
-        )
+        geom_xml = f'<geom name="{name}_geom" type="{shape}" size="{size}" rgba="{rgba}" mass="{spec.mass}"/>'
 
         object_xml = f"""
     <body name="{name}" pos="{x0} {y0} {z0}">
@@ -377,3 +482,90 @@ class TabletopObstacleScene(BaseScene):
             f'size="{size}" '
             f'rgba="{rgba}"/>'
         )
+    
+
+    
+def build_scene_from_scene_spec(
+    scene_spec: TabletopObstacleSceneSpec | dict,
+    config: TabletopObstacleSceneConfig | None = None,
+) -> TabletopObstacleScene:
+    """Canonical structural reconstruction path from serialized scene spec."""
+    return TabletopObstacleScene.from_scene_spec(scene_spec, config=config)
+
+
+def build_env_from_scene(
+    scene: TabletopObstacleScene,
+    *,
+    env_cls=None,
+    action_interface=None,
+    observation_provider=None,
+):
+    """Build a runtime env from any realized scene.
+
+    Freshly sampled scenes and dataset-loaded scenes should both go through this
+    same helper so env wiring stays consistent.
+    """
+    if env_cls is None:
+        from telekinetics.simulator.core.env import TelekinesisEnv as env_cls
+    if action_interface is None:
+        from telekinetics.simulator.control.telekinesis import TelekinesisActionInterface
+        action_interface = TelekinesisActionInterface()
+    if observation_provider is None:
+        from telekinetics.simulator.observations.oracle import OracleSceneObservation
+        observation_provider = OracleSceneObservation()
+
+    return env_cls(
+        scene=scene,
+        action_interface=action_interface,
+        observation_provider=observation_provider,
+    )
+
+
+def restore_checkpoint_into_env(env, checkpoint: dict) -> None:
+    """Apply a saved MuJoCo checkpoint into an already-built env."""
+    env.data.qpos[:] = np.asarray(checkpoint["qpos"], dtype=float)
+    env.data.qvel[:] = np.asarray(checkpoint["qvel"], dtype=float)
+    env.data.mocap_pos[:] = np.asarray(checkpoint["mocap_pos"], dtype=float)
+    env.data.mocap_quat[:] = np.asarray(checkpoint["mocap_quat"], dtype=float)
+    mujoco.mj_forward(env.model, env.data)
+
+
+def build_env_from_scene_spec(
+    scene_spec: TabletopObstacleSceneSpec | dict,
+    *,
+    config: TabletopObstacleSceneConfig | None = None,
+    env_cls=None,
+    action_interface=None,
+    observation_provider=None,
+):
+    """Canonical path for dataset scene reload without runtime restore."""
+    scene = build_scene_from_scene_spec(scene_spec, config=config)
+    return build_env_from_scene(
+        scene,
+        env_cls=env_cls,
+        action_interface=action_interface,
+        observation_provider=observation_provider,
+    )
+
+
+def build_env_from_state_record(
+    state_record,
+    *,
+    config: TabletopObstacleSceneConfig | None = None,
+    env_cls=None,
+    action_interface=None,
+    observation_provider=None,
+):
+    """Canonical full restore path: rebuild structural world, then restore checkpoint."""
+    scene_spec = state_record.scene_spec if hasattr(state_record, "scene_spec") else state_record["scene_spec"]
+    checkpoint = state_record.checkpoint if hasattr(state_record, "checkpoint") else state_record["checkpoint"]
+    env = build_env_from_scene_spec(
+        scene_spec,
+        config=config,
+        env_cls=env_cls,
+        action_interface=action_interface,
+        observation_provider=observation_provider,
+    )
+    restore_checkpoint_into_env(env, checkpoint)
+    return env
+

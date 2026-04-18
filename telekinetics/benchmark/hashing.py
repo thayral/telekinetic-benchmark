@@ -6,6 +6,7 @@ from typing import Any
 
 import numpy as np
 
+
 def _canonicalize(value: Any) -> Any:
     if isinstance(value, np.ndarray):
         return np.asarray(value, dtype=float).round(8).tolist()
@@ -26,10 +27,15 @@ def _canonicalize(value: Any) -> Any:
     return value
 
 
-def compute_state_hash(scene_name: str, object_states: list[dict], checkpoint: dict) -> str:
+def canonicalize_for_hashing(value: Any) -> Any:
+    """Return a JSON-stable representation suitable for hashing/storage comparisons."""
+    return _canonicalize(value)
+
+
+def compute_state_hash(scene_spec: dict[str, Any], checkpoint: dict[str, Any]) -> str:
+    """Hash benchmark state identity as structural world + runtime simulator state."""
     payload = {
-        "scene_name": scene_name,
-        "object_states": _canonicalize(object_states),
+        "scene_spec": _canonicalize(scene_spec),
         "checkpoint": _canonicalize(checkpoint),
     }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")

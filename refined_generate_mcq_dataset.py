@@ -11,31 +11,21 @@ import numpy as np
 from telekinetics.simulator.scenes.tabletop_obstacles import (
     TabletopObstacleSceneConfig,
     TabletopObstacleSceneFactory,
+    build_env_from_scene,
+    build_env_from_state_record,
 )
-
-from telekinetics.simulator.control.telekinesis import TelekinesisActionInterface
-from telekinetics.simulator.core.env import TelekinesisEnv
-from telekinetics.simulator.observations.oracle import OracleSceneObservation
 
 from telekinetics.benchmark.action_library import build_translation_action_library
 from telekinetics.benchmark.symbolic_actions import ActionInstance, ActionSpec, instantiate_action
 from telekinetics.benchmark.action_adapter import symbolic_to_telekinetic_action
-from telekinetics.benchmark.state_record import capture_state, restore_state
+from telekinetics.benchmark.state_record import capture_state
 from telekinetics.benchmark.storage import DatasetPaths, save_state_record
 
 
 CHOICES = ("A", "B", "C")
 FOIL_CATEGORIES = ("wrong_object", "wrong_direction", "wrong_scene")
-MIRROR_DIRECTION = {
-    "left": "right",
-    "right": "left",
-    "forward": "back",
-    "back": "forward",
-}
 ALL_DIRECTIONS = ("forward", "back", "left", "right")
 
-
-# Requested constants
 DEFAULT_MAGNITUDES = (0.5,)
 DEFAULT_ROLLOUT_STEPS = 500
 DEFAULT_SETTLE_STEPS = 20
@@ -107,19 +97,23 @@ def _sample_correct_action(
     )
 
 
-def _run_action_from_restored_state(
-    env,
+def _run_action_from_state_record(
     start_state,
     action: ActionInstance,
     *,
+    cfg: TabletopObstacleSceneConfig,
     paths: DatasetPaths,
     prefix: str,
     camera_name: str,
     seed: int,
 ):
-    restore_state(env, start_state)
-    env.step(symbolic_to_telekinetic_action(action))
-    end_state = _render_and_save(env, paths, prefix=prefix, camera_name=camera_name, seed=seed)
+    """Canonical replay path: rebuild env from saved state, then run the action."""
+    env = build_env_from_state_record(start_state, config=cfg)
+    try:
+        env.step(symbolic_to_telekinetic_action(action))
+        end_state = _render_and_save(env, paths, prefix=prefix, camera_name=camera_name, seed=seed)
+    finally:
+        env.close()
     return {
         "foil_type": prefix.split("_", 1)[0],
         "state": end_state,
@@ -152,18 +146,19 @@ def _build_wrong_direction_foils(rng, correct_action: ActionInstance) -> list[Ac
 
 
 def _build_wrong_scene_foils(
-    env,
     rng,
     correct_action: ActionInstance,
     *,
+    cfg: TabletopObstacleSceneConfig,
+    factory: TabletopObstacleSceneFactory,
     paths: DatasetPaths,
     camera_name: str,
     seed: int,
 ) -> list[dict]:
-    """Generate two unrelated end-images from entirely fresh scenes.
+    """Generate unrelated answer images from genuinely fresh scenes.
 
-    We still apply a rollout so the foil looks like a plausible transition image, but it is
-    intentionally disconnected from the question's initial scene.
+    This now rebuilds new scene/env pairs instead of using env.reset(...), so the
+    foil is structurally disconnected from the question state.
     """
     foils: list[dict] = []
     seen_hashes: set[str] = set()
@@ -171,23 +166,30 @@ def _build_wrong_scene_foils(
     while len(foils) < 2 and attempts < 20:
         attempts += 1
         fresh_seed = int(seed + 1000 + attempts)
-        env.reset(seed=fresh_seed)
-        object_states = env.get_object_states()
-        fresh_action = _sample_correct_action(
-            rng,
-            object_states,
-            magnitudes=(correct_action.spec.magnitude,),
-            rollout_steps=correct_action.rollout_steps,
-            settle_steps=correct_action.settle_steps,
-        )
-        env.step(symbolic_to_telekinetic_action(fresh_action))
-        end_state = _render_and_save(
-            env,
-            paths,
-            prefix=f"wrong_scene_{attempts}",
-            camera_name=camera_name,
-            seed=fresh_seed,
-        )
+        fresh_scene = factory.create(seed=fresh_seed)
+        fresh_env = build_env_from_scene(fresh_scene)
+        try:
+            fresh_env.reset(seed=fresh_seed)
+            object_states = fresh_env.get_object_states()
+            if not object_states:
+                raise RuntimeError("No objects found in fresh_env during wrong_scene foil generation")
+            fresh_action = _sample_correct_action(
+                rng,
+                object_states,
+                magnitudes=(correct_action.spec.magnitude,),
+                rollout_steps=correct_action.rollout_steps,
+                settle_steps=correct_action.settle_steps,
+            )
+            fresh_env.step(symbolic_to_telekinetic_action(fresh_action))
+            end_state = _render_and_save(
+                fresh_env,
+                paths,
+                prefix=f"wrong_scene_{attempts}",
+                camera_name=camera_name,
+                seed=fresh_seed,
+            )
+        finally:
+            fresh_env.close()
         if end_state.state_hash in seen_hashes:
             continue
         seen_hashes.add(end_state.state_hash)
@@ -213,7 +215,9 @@ def _make_prompt(action: ActionInstance) -> str:
 
 def generate_single_question(
     *,
-    env,
+    # env,
+    cfg: TabletopObstacleSceneConfig,
+    factory: TabletopObstacleSceneFactory,
     paths: DatasetPaths,
     rng,
     category: str,
@@ -227,9 +231,15 @@ def generate_single_question(
     if category not in FOIL_CATEGORIES:
         raise ValueError(f"Unsupported category: {category}")
 
+
+    scene = factory.create(seed=question_seed)
+    env = build_env_from_scene(scene)
     env.reset(seed=question_seed)
     start_state = _render_and_save(env, paths, prefix="start", camera_name=camera_name, seed=question_seed)
     object_states = env.get_object_states()
+    if not object_states:
+        raise RuntimeError("No objects found after env.reset(); scene/env wiring is inconsistent")
+
     correct_action = _sample_correct_action(
         rng,
         object_states,
@@ -238,10 +248,10 @@ def generate_single_question(
         settle_steps=settle_steps,
     )
 
-    correct_rollout = _run_action_from_restored_state(
-        env,
+    correct_rollout = _run_action_from_state_record(
         start_state,
         correct_action,
+        cfg=cfg,
         paths=paths,
         prefix="correct",
         camera_name=camera_name,
@@ -251,10 +261,10 @@ def generate_single_question(
     if category == "wrong_object":
         foil_actions = _build_wrong_object_foils(rng, object_states, correct_action)
         foil_rollouts = [
-            _run_action_from_restored_state(
-                env,
+            _run_action_from_state_record(
                 start_state,
                 action,
+                cfg=cfg,
                 paths=paths,
                 prefix=f"wrong_object_{i}",
                 camera_name=camera_name,
@@ -265,10 +275,10 @@ def generate_single_question(
     elif category == "wrong_direction":
         foil_actions = _build_wrong_direction_foils(rng, correct_action)
         foil_rollouts = [
-            _run_action_from_restored_state(
-                env,
+            _run_action_from_state_record(
                 start_state,
                 action,
+                cfg=cfg,
                 paths=paths,
                 prefix=f"wrong_direction_{i}",
                 camera_name=camera_name,
@@ -278,20 +288,16 @@ def generate_single_question(
         ]
     else:
         foil_rollouts = _build_wrong_scene_foils(
-            env,
             rng,
             correct_action,
+            cfg=cfg,
+            factory=factory,
             paths=paths,
             camera_name=camera_name,
             seed=question_seed,
         )
-        # Restore to the question state so the env is not left in a fresh unrelated scene.
-        restore_state(env, start_state)
 
     candidates = [correct_rollout, *foil_rollouts]
-
-    # Keep retry/simple failure visible if uniqueness breaks. Duplicate states are especially
-    # possible when blocked by walls/obstacles.
     unique_hashes = {c["state"].state_hash for c in candidates}
     if len(unique_hashes) != 3:
         raise RuntimeError(
@@ -339,7 +345,7 @@ def generate_single_question(
     questions_dir = paths.root / "questions"
     questions_dir.mkdir(parents=True, exist_ok=True)
     out_path = questions_dir / f"{qid}.json"
-    out_path.write_text(json.dumps(question, indent=2))
+    out_path.write_text(json.dumps(question, indent=2), encoding="utf-8")
     return question, out_path
 
 
@@ -348,7 +354,7 @@ def generate_mcq_dataset(
     *,
     n_questions_per_category: int = 4,
     categories: Iterable[str] = FOIL_CATEGORIES,
-    seed: int = 0,
+    dataset_seed: int = 0,
     n_objects: int = 4,
     camera_name: str = "cam_oblique",
     magnitudes: Iterable[float] = DEFAULT_MAGNITUDES,
@@ -359,26 +365,26 @@ def generate_mcq_dataset(
     paths.ensure()
     (paths.root / "questions").mkdir(parents=True, exist_ok=True)
 
+    master_rng = np.random.RandomState(dataset_seed)
+
     categories = tuple(categories)
     invalid = [c for c in categories if c not in FOIL_CATEGORIES]
     if invalid:
         raise ValueError(f"Unsupported categories requested: {invalid}")
 
-    cfg = TabletopObstacleSceneConfig(n_objects=n_objects, seed=seed)
+
+    cfg = TabletopObstacleSceneConfig(n_objects=n_objects)
     factory = TabletopObstacleSceneFactory(cfg)
-    scene = factory.create(seed=seed)
-
-    env = TelekinesisEnv(
-        scene=scene,
-        action_interface=TelekinesisActionInterface(),
-        observation_provider=OracleSceneObservation(),
-    )
 
 
-    rng = np.random.default_rng(seed)
+    # scene_seed = int(master_rng.randint(0, 2**31 - 1))
+    # scene = factory.create(seed=scene_seed)
+    # env = build_env_from_scene(scene)
 
+    rng = np.random.default_rng(dataset_seed)
     questions: list[dict] = []
     manifest_rows: list[dict] = []
+
 
     try:
         for category_index, category in enumerate(categories):
@@ -386,10 +392,16 @@ def generate_mcq_dataset(
             attempt = 0
             while made < n_questions_per_category:
                 attempt += 1
-                question_seed = int(seed + category_index * 10_000 + attempt)
+                # question_seed = int(seed + category_index * 10_000 + attempt)
+                
+                question_seed = int(master_rng.randint(0, 2**31 - 1))
+
+
                 try:
                     question, out_path = generate_single_question(
-                        env=env,
+                        # env=env,
+                        cfg=cfg,
+                        factory=factory,
                         paths=paths,
                         rng=rng,
                         category=category,
@@ -401,7 +413,6 @@ def generate_mcq_dataset(
                         settle_steps=settle_steps,
                     )
                 except RuntimeError:
-                    # Retry another seed if one question degenerates into duplicate images.
                     continue
                 questions.append(question)
                 manifest_rows.append(
@@ -419,11 +430,11 @@ def generate_mcq_dataset(
                 )
                 made += 1
     finally:
-        env.close()
+        # env.close()
+        pass
 
     manifest_path = paths.root / "questions_manifest.jsonl"
-    manifest_path.write_text("\n".join(json.dumps(row) for row in manifest_rows) + "\n")
-
+    manifest_path.write_text("\n".join(json.dumps(row) for row in manifest_rows) + "\n", encoding="utf-8")
     return questions
 
 
@@ -432,7 +443,7 @@ if __name__ == "__main__":
         dataset_root="debug_mcq_dataset_v2",
         n_questions_per_category=4,
         n_objects=4,
-        seed=0,
+        dataset_seed=0,
         magnitudes=(0.5,),
         rollout_steps=500,
     )
