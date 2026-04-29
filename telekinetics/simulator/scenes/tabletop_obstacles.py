@@ -19,6 +19,17 @@ from telekinetics.simulator.scenes.obstacle_library import (
     default_obstacle_library,
     sample_obstacle_specs,
 )
+from telekinetics.simulator.scenes.scene_collision import (
+    BoundingSphere,
+    first_sphere_collision,
+    make_bounding_sphere,
+)
+from telekinetics.simulator.scenes.sampling_errors import (
+    ObjectSamplingError,
+    ObstacleSamplingError,
+)
+
+
 
 
 @dataclass(frozen=True)
@@ -36,6 +47,9 @@ class TabletopObstacleSceneConfig:
     table_half_size: float = 0.55
     object_spawn_half_range: float = 0.20
     min_object_separation: float = 0.12
+    collision_margin: float = 0.01
+    max_placement_attempts_per_item: int = 500
+    max_scene_sampling_attempts: int = 25
     object_library: list[PrimitiveObjectSpec] = field(default_factory=default_object_library)
 
     min_obstacles: int = 1
@@ -159,20 +173,32 @@ class TabletopObstacleSceneFactory:
         seed = self.cfg.seed if seed is None else int(seed)
         rng = np.random.default_rng(seed)
 
-        object_specs = tuple(
-            sample_object_specs(
-                rng=rng,
-                library=self.cfg.object_library,
-                n_objects=self.cfg.n_objects,
+        last_error: ObstacleSamplingError | None = None
+        for _scene_attempt in range(self.cfg.max_scene_sampling_attempts):
+            object_specs = tuple(
+                sample_object_specs(
+                    rng=rng,
+                    library=self.cfg.object_library,
+                    n_objects=self.cfg.n_objects,
+                )
             )
-        )
-        obstacle_specs = sample_obstacle_specs(
-            rng=rng,
-            library=self.cfg.obstacle_library,
-            min_count=self.cfg.min_obstacles,
-            max_count=self.cfg.max_obstacles,
-        )
-        obstacles = tuple(self._instantiate_obstacles(rng, obstacle_specs))
+            obstacle_specs = sample_obstacle_specs(
+                rng=rng,
+                library=self.cfg.obstacle_library,
+                min_count=self.cfg.min_obstacles,
+                max_count=self.cfg.max_obstacles,
+            )
+            try:
+                obstacles = tuple(self._instantiate_obstacles(rng, obstacle_specs))
+                break
+            except ObstacleSamplingError as exc:
+                last_error = exc
+        else:
+            raise ObstacleSamplingError(
+                f"Could not sample a collision-free obstacle population after "
+                f"{self.cfg.max_scene_sampling_attempts} scene attempts "
+                f"(max {self.cfg.max_placement_attempts_per_item} placement attempts per obstacle)."
+            ) from last_error
 
         return TabletopObstacleSceneSpec(
             scene_type="tabletop_obstacle",
@@ -188,26 +214,36 @@ class TabletopObstacleSceneFactory:
 
     def reset_positions(self, scene: "TabletopObstacleScene", env, rng) -> None:
         """Resample dynamic object pose only inside an already-built world."""
-        spawn = scene.config.object_spawn_half_range #if scene.config is not None else 0.30
-        min_sep = scene.config.min_object_separation #if scene.config is not None else 0.12
-        plane_z = scene.spec.plane_z
-        placed_xy: list[tuple[float, float]] = []
+        spawn = scene.config.object_spawn_half_range
+        # scene.spec.plane_z is the tabletop surface height.
+        table_top_z = scene.spec.plane_z
+
+        # Sphere approx. for object collisions in placement
+        placed_spheres: list[BoundingSphere] = [
+            self._sphere_for_obstacle(obs) for obs in scene.scene_obstacles
+        ]
 
         for spec, name in zip(scene.object_specs, scene._meta.object_names):
             jx = mujoco.mj_name2id(env.model, mujoco.mjtObj.mjOBJ_JOINT, f"{name}_x")
             jy = mujoco.mj_name2id(env.model, mujoco.mjtObj.mjOBJ_JOINT, f"{name}_y")
             jyaw = mujoco.mj_name2id(env.model, mujoco.mjtObj.mjOBJ_JOINT, f"{name}_yaw")
 
-            radius = self._object_planar_radius(spec)
-            x, y = self._sample_spawn_xy(
+            
+            
+
+            
+            z = self._center_z_on_table(spec, table_top_z)
+            x, y = self._sample_valid_xy(
                 rng=rng,
+                spec=spec,
+                name=name,
                 spawn=spawn,
-                min_sep=min_sep,
-                placed_xy=placed_xy,
-                object_radius=radius,
-                obstacles=scene.scene_obstacles,
+                z=z,
+                placed_spheres=placed_spheres,
+                extra_margin=0.0,
+                error_cls=ObjectSamplingError
             )
-            placed_xy.append((x, y))
+            placed_spheres.append(self._sphere_for_object_spec(name, spec, (x, y, z)))
 
             env.data.qpos[env.model.jnt_qposadr[jx]] = x
             env.data.qpos[env.model.jnt_qposadr[jy]] = y
@@ -218,80 +254,105 @@ class TabletopObstacleSceneFactory:
         for i, name in enumerate(scene._meta.object_names):
             body_id = env.object_body_ids[name]
             pos = env.data.xpos[body_id].copy()
-            env.data.mocap_pos[i, 0] = pos[0]
-            env.data.mocap_pos[i, 1] = pos[1]
-            env.data.mocap_pos[i, 2] = plane_z
+            env.data.mocap_pos[i, :] = pos
 
     def _instantiate_obstacles(self, rng, obstacle_specs: list[ObstacleSpec]) -> list[ObstaclePlacement]:
-        placed_xy: list[tuple[float, float]] = []
+        placed_spheres: list[BoundingSphere] = []
         out: list[ObstaclePlacement] = []
         for i, spec in enumerate(obstacle_specs):
-            x, y = self._sample_obstacle_xy(rng, placed_xy, spec)
-            placed_xy.append((x, y))
-            z = float(spec.size[-1]) if len(spec.size) >= 3 else 0.03
-            out.append(
-                ObstaclePlacement(
-                    name=f"obstacle_{i}",
-                    spec=spec,
-                    pos=(x, y, z),
-                    rgba=tuple(self.cfg.obstacle_rgba),
-                )
+            name = f"obstacle_{i}"
+            z = self._center_z_on_table(spec, self.cfg.plane_z)
+
+            x, y = self._sample_valid_xy(
+            rng=rng,
+            spec=spec,
+            name=name,
+            spawn=self.cfg.obstacle_spawn_half_range,
+            z=z,
+            placed_spheres=placed_spheres,
+            extra_margin=0.0,
+            error_cls=ObstacleSamplingError,
             )
+            
+            placement = ObstaclePlacement(
+                name=name,
+                spec=spec,
+                pos=(x, y, z),
+                rgba=tuple(self.cfg.obstacle_rgba),
+            )
+            out.append(placement)
+            placed_spheres.append(self._sphere_for_obstacle_placement(placement))
         return out
 
-    def _sample_obstacle_xy(self, rng, placed_xy: list[tuple[float, float]], spec: ObstacleSpec) -> tuple[float, float]:
-        hx = float(spec.size[0])
-        hy = float(spec.size[1]) if len(spec.size) > 1 else hx
-        limit = self.cfg.obstacle_spawn_half_range
-        margin = 0.04
-        lo_x = -(limit - hx - margin)
-        hi_x = (limit - hx - margin)
-        lo_y = -(limit - hy - margin)
-        hi_y = (limit - hy - margin)
-        if lo_x > hi_x or lo_y > hi_y:
-            return 0.0, 0.0
 
-        for _ in range(200):
-            x = float(rng.uniform(lo_x, hi_x))
-            y = float(rng.uniform(lo_y, hi_y))
-            if all((x - px) ** 2 + (y - py) ** 2 >= self.cfg.min_obstacle_separation ** 2 for px, py in placed_xy):
-                return x, y
-        return float(rng.uniform(lo_x, hi_x)), float(rng.uniform(lo_y, hi_y))
 
-    def _sample_spawn_xy(
+    def _sample_valid_xy(
         self,
+        *,
         rng,
+        spec: PrimitiveObjectSpec | ObstacleSpec,
+        name: str,
         spawn: float,
-        min_sep: float,
-        placed_xy: list[tuple[float, float]],
-        object_radius: float,
-        obstacles: list[SceneObstacle],
+        z: float,
+        placed_spheres: list[BoundingSphere],
+        extra_margin: float,
+        error_cls: type[RuntimeError],
     ) -> tuple[float, float]:
-        for _ in range(200):
-            x = float(rng.uniform(-spawn, spawn))
-            y = float(rng.uniform(-spawn, spawn))
-            if not all((x - px) ** 2 + (y - py) ** 2 >= min_sep ** 2 for px, py in placed_xy):
-                continue
-            if self._blocked_by_obstacle(x, y, object_radius, obstacles):
-                continue
-            return x, y
-        return float(rng.uniform(-spawn, spawn)), float(rng.uniform(-spawn, spawn))
+        radius = make_bounding_sphere(name=name, spec=spec, center=(0.0, 0.0, z)).radius
+        limit = min(float(spawn), float(self.cfg.table_half_size) - radius - self.cfg.collision_margin)
+        if limit <= 0.0:
+            raise error_cls(
+                f"Cannot place {name}: conservative radius {radius:.4f} does not fit "
+                f"inside table half-size {self.cfg.table_half_size:.4f}."
+            )
 
-    def _blocked_by_obstacle(self, x: float, y: float, radius: float, obstacles: list[SceneObstacle]) -> bool:
-        for obs in obstacles:
-            ox, oy, _ = obs.pos
-            hx = float(obs.size[0])
-            hy = float(obs.size[1]) if len(obs.size) > 1 else hx
-            if abs(x - ox) <= (hx + radius + 0.01) and abs(y - oy) <= (hy + radius + 0.01):
-                return True
-        return False
+        margin = float(self.cfg.collision_margin + extra_margin)
+        for _ in range(self.cfg.max_placement_attempts_per_item):
+            x = float(rng.uniform(-limit, limit))
+            y = float(rng.uniform(-limit, limit))
+            candidate = make_bounding_sphere(name=name, spec=spec, center=(x, y, z))
+            if first_sphere_collision(candidate, placed_spheres, margin=margin) is None:
+                return x, y
 
-    def _object_planar_radius(self, spec: PrimitiveObjectSpec) -> float:
+        raise error_cls(
+            f"Could not place {name} after {self.cfg.max_placement_attempts_per_item} attempts "
+            f"with {len(placed_spheres)} existing collision primitives."
+        )
+
+
+
+    def _center_z_on_table(
+        self,
+        spec: PrimitiveObjectSpec | ObstacleSpec,
+        table_top_z: float,
+    ) -> float:
+        """Return world-z center for a primitive resting on the tabletop.
+
+        Convention: scene/spec plane_z is the tabletop surface height. MuJoCo
+        body/geom positions are primitive centers.
+        """
         if spec.shape == "box":
-            return float((spec.size[0] ** 2 + spec.size[1] ** 2) ** 0.5)
-        if spec.shape in {"sphere", "cylinder"}:
-            return float(spec.size[0])
-        return 0.05
+            return float(table_top_z) + float(spec.size[2])
+        if spec.shape == "sphere":
+            return float(table_top_z) + float(spec.size[0])
+        if spec.shape == "cylinder":
+            # MuJoCo cylinder size is (radius, half-height).
+            return float(table_top_z) + float(spec.size[1])
+        raise ValueError(f"No center-z mapping defined for shape {spec.shape!r}.")
+
+    def _sphere_for_object_spec(
+        self,
+        name: str,
+        spec: PrimitiveObjectSpec,
+        center: tuple[float, float, float],
+    ) -> BoundingSphere:
+        return make_bounding_sphere(name=name, spec=spec, center=center)
+
+    def _sphere_for_obstacle_placement(self, obstacle: ObstaclePlacement) -> BoundingSphere:
+        return make_bounding_sphere(name=obstacle.name, spec=obstacle.spec, center=obstacle.pos)
+
+    def _sphere_for_obstacle(self, obstacle: SceneObstacle) -> BoundingSphere:
+        return make_bounding_sphere(name=obstacle.name, spec=obstacle, center=obstacle.pos)
 
 
 class TabletopObstacleScene(BaseScene):
@@ -313,6 +374,10 @@ class TabletopObstacleScene(BaseScene):
             )
             for obs in spec.obstacles
         ]
+
+        self._good_init = True
+
+
         self._meta = SceneMetadata(
             object_names=[f"obj_{i}" for i in range(len(self.object_specs))],
             obstacle_names=[obs.name for obs in self.scene_obstacles],
@@ -371,6 +436,19 @@ class TabletopObstacleScene(BaseScene):
     ) -> "TabletopObstacleScene":
         data = json.loads(Path(path).read_text(encoding="utf-8"))
         return cls.from_scene_spec(data, config=config)
+    
+
+    def _table_half_height(self) -> float:
+        return 0.05
+
+    def _table_center_z(self) -> float:
+        # scene/spec plane_z is the tabletop surface height. The table geom is
+        # inside the table body and has half-height _table_half_height().
+        return float(self.spec.plane_z) - self._table_half_height()
+
+    def _world_pos_to_table_local(self, pos: tuple[float, float, float]) -> tuple[float, float, float]:
+        x, y, z = pos
+        return (float(x), float(y), float(z) - self._table_center_z())
 
     def build_mjcf(self) -> str:
         if self.spec.world_preset != "tabletop_obstacles_v1":
@@ -378,6 +456,10 @@ class TabletopObstacleScene(BaseScene):
 
         gravity = "0 0 -9.81" if self.spec.gravity_on else "0 0 0"
         h = self.spec.table_half_size
+        table_half_height = self._table_half_height()
+        table_center_z = self._table_center_z()
+        wall_half_height = 0.08
+        wall_center_z = table_half_height + wall_half_height
 
         object_bodies = []
         mocap_bodies = []
@@ -409,16 +491,16 @@ class TabletopObstacleScene(BaseScene):
     <camera name="cam_oblique" pos="-0.009 -0.950 1.597" xyaxes="1.000 -0.000 0.000 0.000 0.754 0.657" fovy="25"/>
     <geom name="floor" type="plane" size="3 3 0.1" rgba="0.95 0.95 0.95 1"/>
 
-    <body name="table" pos="0 0 0.45">
-      <geom name="table_geom" type="box" size="{h} {h} 0.05" rgba="0.75 0.75 0.78 1"/>
 
-      <geom name="wall_north" type="box" pos="0 {h} 0.08" size="{h} 0.01 0.08" rgba="0.35 0.35 0.35 1"/>
-      <geom name="wall_south" type="box" pos="0 -{h} 0.08" size="{h} 0.01 0.08" rgba="0.35 0.35 0.35 1"/>
-      <geom name="wall_east"  type="box" pos="{h} 0 0.08" size="0.01 {h} 0.08" rgba="0.35 0.35 0.35 1"/>
-      <geom name="wall_west"  type="box" pos="-{h} 0 0.08" size="0.01 {h} 0.08" rgba="0.35 0.35 0.35 1"/>
+    <body name="table" pos="0 0 {table_center_z}">
+      <geom name="table_geom" type="box" size="{h} {h} {table_half_height}" rgba="0.75 0.75 0.78 1"/>
+
+      <geom name="wall_north" type="box" pos="0 {h} {wall_center_z}" size="{h} 0.01 {wall_half_height}" rgba="0.35 0.35 0.35 1"/>
+      <geom name="wall_south" type="box" pos="0 -{h} {wall_center_z}" size="{h} 0.01 {wall_half_height}" rgba="0.35 0.35 0.35 1"/>
+      <geom name="wall_east"  type="box" pos="{h} 0 {wall_center_z}" size="0.01 {h} {wall_half_height}" rgba="0.35 0.35 0.35 1"/>
+      <geom name="wall_west"  type="box" pos="-{h} 0 {wall_center_z}" size="0.01 {h} {wall_half_height}" rgba="0.35 0.35 0.35 1"/>
 
       {''.join(obstacle_geoms)}
-
       <geom name="goal_region" type="box" pos="0.25 0.25 0.002" size="0.06 0.06 0.002"
             rgba="0.15 0.85 0.20 0.35" contype="0" conaffinity="0"/>
     </body>
@@ -439,6 +521,16 @@ class TabletopObstacleScene(BaseScene):
             raise RuntimeError("Scene.reset_layout requires a config-backed scene.")
         TabletopObstacleSceneFactory(self.config).reset_positions(self, env, rng)
 
+    def _center_z_on_table(self, spec: PrimitiveObjectSpec | ObstacleSpec, table_top_z: float) -> float:
+        """Return world-z center for a primitive resting on the tabletop."""
+        if spec.shape == "box":
+            return float(table_top_z) + float(spec.size[2])
+        if spec.shape == "sphere":
+            return float(table_top_z) + float(spec.size[0])
+        if spec.shape == "cylinder":
+            return float(table_top_z) + float(spec.size[1])
+        raise ValueError(f"No center-z mapping defined for shape {spec.shape!r}.")
+
     def _make_object_bundle(self, index: int, spec: PrimitiveObjectSpec):
         name = f"obj_{index}"
         mocap_name = f"mocap_{index}"
@@ -449,7 +541,7 @@ class TabletopObstacleScene(BaseScene):
 
         x0 = 0.0
         y0 = 0.0
-        z0 = self.spec.plane_z
+        z0 = self._center_z_on_table(spec, self.spec.plane_z)
         table_half_size = self.config.table_half_size if self.config is not None else self.spec.table_half_size
         slide_limit = table_half_size - 0.07
 
@@ -471,8 +563,13 @@ class TabletopObstacleScene(BaseScene):
         weld_xml = f'<weld body1="{mocap_name}" body2="{name}" solref="0.04 1"/>\n'
         return object_xml, mocap_xml, weld_xml
 
+
     def _make_obstacle_geom_xml(self, obstacle: SceneObstacle) -> str:
-        pos = " ".join(map(str, obstacle.pos))
+        # Obstacle positions in scene_spec are world coordinates. Because
+        # obstacle geoms are emitted inside the table body, MuJoCo expects their
+        # pos attribute in the table body local frame.
+        local_pos = self._world_pos_to_table_local(obstacle.pos)
+        pos = " ".join(map(str, local_pos))
         size = " ".join(map(str, obstacle.size))
         rgba = " ".join(map(str, obstacle.rgba))
         return (

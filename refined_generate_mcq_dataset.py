@@ -14,6 +14,7 @@ from telekinetics.simulator.scenes.tabletop_obstacles import (
     build_env_from_scene,
     build_env_from_state_record,
 )
+from telekinetics.simulator.scenes.sampling_errors import SceneSamplingError
 
 from telekinetics.benchmark.action_library import build_translation_action_library
 from telekinetics.benchmark.symbolic_actions import ActionInstance, ActionSpec, instantiate_action
@@ -412,7 +413,7 @@ def generate_mcq_dataset(
                         rollout_steps=rollout_steps,
                         settle_steps=settle_steps,
                     )
-                except RuntimeError:
+                except SceneSamplingError:
                     continue
                 questions.append(question)
                 manifest_rows.append(
