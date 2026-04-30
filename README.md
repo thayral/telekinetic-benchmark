@@ -29,7 +29,7 @@ TLDR: Can AI understand the structured 3D physical scene in an image from video 
 
 - **Object transformations**  
   States evolve through explicit transformations, structuring interaction as causal* transformations of objects.
-    (*causality as interpretative mecanism, grounded in the affordances at the level of the agents)
+    (*`causality`  as interpretative mecanism, grounded in the affordances at the level of the agents, see ML street talk with Dr. Jeff Beck)
 
 - **Transformation graph as a dataset**  
   Each scene becomes a graph of states and transitions, allowing:
@@ -38,7 +38,7 @@ TLDR: Can AI understand the structured 3D physical scene in an image from video 
   - structured supervision beyond flat samples  
 
 - **QA triplets generation**  
-  Built-in support for `(state, question, answer)` with the data triplet : **state-transform-state**, making it easy to generate supervised reasoning datasets.
+  Built-in support for `(state, question, answer)` with the data triplet : **state->action->state**, making it easy to generate supervised reasoning datasets.
 
 - **Occlusion-aware reasoning**  
     - Partial observability, object permanence...
