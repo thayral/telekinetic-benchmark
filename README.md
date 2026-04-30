@@ -15,11 +15,9 @@ This extends the vision of my PhD work on low-level reflex control for manipulat
 TLDR: do models need contact data or interaction data ?
 
 
+  <em>Task: "Move the yellow object to the left"</em>
 
 <p align="center">
-  <em>Task: "Move the yellow object to the left"</em>
-  <img src="media/scene-209652396_9d1e69bb5206669c_correct_000001_move_1777516124330688300.png" width="500"/><br>
-  
-  <img src="media/purple collision.png" width="500"/><br>
-  <img src="media/yellow cube.png" width="500"/><br>
+  <img src="media/scene-209652396_9d1e69bb5206669c_correct_000001_move_1777516124330688300.png" width="300"/><br>
+  <img src="media/yellow cube.png" width="300"/> <img src="media/purple collision.png" width="300"/>
 </p>
