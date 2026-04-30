@@ -554,12 +554,29 @@ class TabletopObstacleScene(BaseScene):
       <joint name="{name}_yaw" type="hinge" axis="0 0 1" range="-180 180"/>
       {geom_xml}
     </body>
-"""
-        mocap_xml = f"""
-    <body name="{mocap_name}" mocap="true" pos="{x0} {y0} {z0}">
-      <geom type="sphere" size="0.015" rgba="0 0 0 0.22" contype="0" conaffinity="0"/>
-    </body>
-"""
+ """
+
+
+
+        #### HIDE MOCAP BY REMOVING GEOM
+        
+        # show_mocap = True
+        show_mocap = False
+
+        if  show_mocap : 
+        
+            mocap_xml = f"""
+        <body name="{mocap_name}" mocap="true" pos="{x0} {y0} {z0}">
+        <geom type="sphere" size="0.015" rgba="0 0 0 0.22" contype="0" conaffinity="0"/>
+        </body>
+        """
+        else :         
+            mocap_xml = f"""
+        <body name="{mocap_name}" mocap="true" pos="{x0} {y0} {z0}">
+        </body>
+            """
+
+
         weld_xml = f'<weld body1="{mocap_name}" body2="{name}" solref="0.04 1"/>\n'
         return object_xml, mocap_xml, weld_xml
 
