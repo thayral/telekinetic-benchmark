@@ -1,16 +1,17 @@
-# Telekinetics
-
-Minimal but modular scaffold for spatial reasoning experiments, using mujoco.
-
 
 # Benchmarking framework
-(This work is under development. It shifted from training environement to a benchmark philosophy, inspired by the DeepMind/Kaggle competition on cognitive benchmarks)
 
-Designing cognitive benchmarks for **physical AI**: spatial understanding, object-centric representations, action-conditioned.
+Interactive environement / dataset generator for spatial reasoning experiments, using mujoco.
+(This project is under development. It shifted from training environement to a benchmarking philosophy, inspired by the DeepMind paper / Kaggle competition on cognitive benchmarks)
+
+
+# Telekinetics
+
+Designing cognitive benchmarks for **physical AI**: spatial understanding, object-centric representations, action-conditioned...
 It is set in a "telekinesis" framework: agents control objects in an abstract way (motion without contact). The low-level complexity of physical interaction and dynamics is partly removed, to focus on higher-level physical constraints: object collision, 3D structure, permanent identity of objects, ... . Telekinesis corresponds to the **object-centric control**, without embodied interaction, a good compromise for the cognitive evaluation of arbitrary embodiements in physical tasks with scene understanding, spatial reasoning and action planning. The interface and evaluation protocols remain a big challenge (visual QA, structured text output, interactive evaluation...). In an interactive setup, the benchmark can consist in **visual interactive puzzles**, but less abstract than ARC-AGI-3, and testing more basic cognitive factulties that are still difficult.
 
 
-This complements the vision of my **PhD work** on [low-level reflex control]((https://thayral.github.io/reactive-slip-control/)) for manipulation. The fast-feedback stabilization layers can handle the physical contacts, and provide abstraction over interaction. But higher-level planning and reasoning still have to be grounded in objects and causal interaction for the 3D physical world. 
+This complements the vision of my **PhD work** on [low-level reflex control](https://thayral.github.io/reactive-slip-control/) for manipulation. The fast-feedback stabilization layers can handle the physical contacts, and provide abstraction over interaction. But higher-level planning and reasoning still have to be grounded in objects and causal interaction for the 3D physical world. 
 
 TLDR: Can AI understand the structured 3D physical scene in an image from video alone ? Does grounding require contact or is it about **interaction** ?
 
