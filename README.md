@@ -21,3 +21,55 @@ TLDR: do models need contact data or interaction data ?
   <img src="media/scene-209652396_9d1e69bb5206669c_correct_000001_move_1777516124330688300.png" width="300"/><br>
   <img src="media/yellow cube.png" width="300"/> <img src="media/purple collision.png" width="300"/>
 </p>
+
+
+## Why this framework?
+
+
+- **Object transformations**  
+  States evolve through explicit transformations, structuring interaction as causal* transformations of objects.
+    (*causality as interpretative mecanism, grounded in the affordances at the level of the agents)
+
+- **Transformation graph as a dataset**  
+  Each scene becomes a graph of states and transitions, allowing:
+  - trajectory-based learning  
+  - counterfactual reasoning  
+  - structured supervision beyond flat samples  
+
+- **QA triplets generation**  
+  Built-in support for `(state, question, answer)` data, making it easy to generate supervised reasoning datasets.
+
+- **Occlusion-aware reasoning**  
+    - Partial observability, object permanence...
+
+- **Explicit collision modeling**  
+    - 3D structure and visual puzzles based on physical constraints.
+
+
+- **Clear separation of concerns**  
+  - Scene specification (reproducible structure)  
+  - Factory (random generation)  
+  - Environment (physics engine)  
+  - Interaction dataset (-> train & eval)
+
+
+
+## Roadmap
+
+- [x] Simulation environement 
+- [x] Scene factory
+- [x] Dataset generation VQA
+- [x] Step callbacks 
+- [x] Composition of interactions
+
+- [ ] Canonical replay path for loading scenes, with stronger seeding and history
+- [ ] Add collision summaries to transition edges
+- [ ] Add occlusion summaries to transition edges
+
+- [ ] Benchmark difficulty axes:
+  - visual ambiguity (clip)
+  - scene difficulty
+  - interaction vocabulary
+  - prompt variants
+  - camera/viewpoint variants
+  - object textures / floor grid
