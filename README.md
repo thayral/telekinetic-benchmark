@@ -38,7 +38,7 @@ TLDR: Can AI understand the structured 3D physical scene in an image from video 
   - structured supervision beyond flat samples  
 
 - **QA triplets generation**  
-  Built-in support for `(state, question, answer)` data, making it easy to generate supervised reasoning datasets.
+  Built-in support for `(state, question, answer)` with the data triplet : **state-transform-state**, making it easy to generate supervised reasoning datasets.
 
 - **Occlusion-aware reasoning**  
     - Partial observability, object permanence...
