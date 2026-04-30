@@ -2,7 +2,7 @@
 # Benchmarking framework
 
 Interactive environment / dataset generator for spatial reasoning experiments, using mujoco.
-(This project is under development. It shifted from training environement to a benchmarking philosophy, inspired by the DeepMind paper / Kaggle competition on cognitive benchmarks)
+(This project is under development. It shifted from training environment to a benchmarking philosophy, inspired by the DeepMind paper / Kaggle competition on cognitive benchmarks)
 
 
 # Telekinetics
@@ -57,7 +57,7 @@ TLDR: Can AI understand the structured 3D physical scene in an image from video 
 
 ## Roadmap
 
-- [x] Simulation environement 
+- [x] Simulation environment 
 - [x] Scene factory
 - [x] Dataset generation VQA
 - [x] Step callbacks 
