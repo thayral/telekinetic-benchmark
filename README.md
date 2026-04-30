@@ -1,7 +1,7 @@
 
 # Benchmarking framework
 
-Interactive environement / dataset generator for spatial reasoning experiments, using mujoco.
+Interactive environment / dataset generator for spatial reasoning experiments, using mujoco.
 (This project is under development. It shifted from training environement to a benchmarking philosophy, inspired by the DeepMind paper / Kaggle competition on cognitive benchmarks)
 
 
