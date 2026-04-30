@@ -3,16 +3,16 @@
 Minimal but modular scaffold for spatial reasoning experiments, using mujoco.
 
 
-# telekinetic-benchmark
+# Benchmarking framework
 (This work is under development. It shifted from training environement to a benchmark philosophy, inspired by the DeepMind/Kaggle competition on cognitive benchmarks)
 
-Trying to designed cognitive benchmarks for physical AI: spatial understanding, object-centric representations, action-conditioned.
-It is set in a "telekinesis" framework: agents control objects in an abstract way. The low-level complexity of physical interaction and dynamics is partly removed, to focus on higher-level physical constraints: object collision, 3D structure, permanent identity of objects, ... . Telekinesis corresponds to the object-centric control, without embodied interaction, a good compromise for the cognitive evaluation of arbitrary embodiements in physical tasks with scene understanding, spatial reasoning and action planning. The interface and evaluation protocols remain a big challenge (visual QA, structured text output, interactive evaluation...).
+Designing cognitive benchmarks for physical AI: spatial understanding, object-centric representations, action-conditioned.
+It is set in a "telekinesis" framework: agents control objects in an abstract way (motion without contact). The low-level complexity of physical interaction and dynamics is partly removed, to focus on higher-level physical constraints: object collision, 3D structure, permanent identity of objects, ... . Telekinesis corresponds to the object-centric control, without embodied interaction, a good compromise for the cognitive evaluation of arbitrary embodiements in physical tasks with scene understanding, spatial reasoning and action planning. The interface and evaluation protocols remain a big challenge (visual QA, structured text output, interactive evaluation...). In an interactive setup, the benchmark can consist in visual interactive puzzles, but less abstract than ARC-AGI-3, and testing more basic cognitive factulties that are still difficult.
 
 
 This extends the vision of my PhD work on low-level reflex control for manipulation. The fast-feedback stabilization layers can handle the physical contacts, and provide abstraction over interaction. But higher-level planning and reasoning still have to be grounded in objects and causal interaction for the 3D physical world. 
 
-TLDR: do models need contact data or interaction data ?
+TLDR: Can AI understand the structured 3D physical scene in an image from video alone ? If it requires something more, is it contact or is interaction enough ?
 
 
   <em>Task: "Move the yellow object to the left"</em>
@@ -65,6 +65,7 @@ TLDR: do models need contact data or interaction data ?
 - [ ] Canonical replay path for loading scenes, with stronger seeding and history
 - [ ] Add collision summaries to transition edges
 - [ ] Add occlusion summaries to transition edges
+- [ ] Multi-POV, agent motion
 
 - [ ] Benchmark difficulty axes:
   - visual ambiguity (clip)
@@ -73,3 +74,4 @@ TLDR: do models need contact data or interaction data ?
   - prompt variants
   - camera/viewpoint variants
   - object textures / floor grid
+  - 2D / 3D
