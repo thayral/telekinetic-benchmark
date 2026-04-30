@@ -29,7 +29,7 @@ TLDR: Can AI understand the structured 3D physical scene in an image from video 
 
 - **Object transformations**  
   States evolve through explicit transformations, structuring interaction as causal* transformations of objects.
-    (*`causality`  as interpretative mecanism, grounded in the affordances at the level of the agents, see ML street talk with Dr. Jeff Beck)
+    (*`causality`  as interpretative mechanism, grounded in the affordances at the level of the agents, see ML street talk with Dr. Jeff Beck)
 
 - **Transformation graph as a dataset**  
   Each scene becomes a graph of states and transitions, allowing:
